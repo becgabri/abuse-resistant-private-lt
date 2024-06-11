@@ -1,0 +1,11 @@
+[Unit]
+Description=Airtag BLE scanner
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/scanner %h/airtag-scanner-data/ble/
+Type=simple
+Restart=always
+
+[Install]
+WantedBy=default.target

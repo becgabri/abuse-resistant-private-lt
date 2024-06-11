@@ -1,0 +1,11 @@
+[Unit]
+Description=GPS location logger
+After=gpsd.service
+
+[Service]
+ExecStart=/usr/local/bin/tracker %h/airtag-scanner-data/loc/
+Type=simple
+Restart=always
+
+[Install]
+WantedBy=default.target
