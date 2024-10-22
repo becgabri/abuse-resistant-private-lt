@@ -8,7 +8,7 @@ from random import randint,random
 from sage.all import GF, Integer, Matrix, PolynomialRing, prod, copy, vector, gcd
 
 def my_monomials_of_degree(polyring, degree):
-        r"""
+        """
         Return a list of all monomials of the given total degree in this
         multivariate polynomial ring.
         EXAMPLES::
@@ -238,10 +238,10 @@ class CHDecoder:
         for i in range(self._c):
             M_D[0, i + 1] = lagr_polys[i]
             M_D[i + 1, i + 1] = N
-        A = M_D.weak_popov_form()
+        A = M_D.popov_form()
         return A
 
-    def construct_one_out(self, basis_vectors, amplify, search_pt):
+    def construct_one_out(self, basis_vectors, amplify, err_poly):
         for_testing = copy(basis_vectors)
         n_rows = len(for_testing)
         for i in range(n_rows):
@@ -250,9 +250,9 @@ class CHDecoder:
             for_testing[i] = for_testing[i] + add_identity_row
 
         num_cols = len(for_testing[0])
-        last_row = [(self._z-search_pt)*amplify] + (num_cols-1)*[0]
+        last_row = [err_poly*amplify] + (num_cols-1)*[0]
         for_testing.append(last_row)
-        check_vals = Matrix(for_testing).change_ring(self._pR).weak_popov_form()
+        check_vals = Matrix(for_testing).change_ring(self._pR).popov_form()
         
         return check_vals
 
@@ -299,8 +299,6 @@ class CHDecoder:
                     self._pR(x / comb_svs[0])
                     for x in resp_polys
                 ]
-                #print("Hit first path!")
-                #import pdb; pdb.set_trace()
                 if resp_polys[0].degree() <= self._ell:
                     if not done_first_detection:
                         done_first_detection = True
@@ -313,25 +311,22 @@ class CHDecoder:
                 continue
             else:
                 # checking for hard multi-solution cases
- 
-                # first, we remove what MUST be random errors from 
-                # consideration and look for for a single point to use 
-                # to structure our lattice sub-problem 
-                gcd_polys = gcd(A[-1][0],A[-1][1])
-                for j in range(self._c-1):
-                    gcd_polys = gcd(gcd_polys, A[-1][2+j])
-                random_pts = []
-                for factor,deg in gcd_polys.factor():
+                # first part does work of deciding which points to use to craft the second lattice
+                excl_fact = self.N
+                for i in range(A.nrows()):
+                    if compute_norm(A[i]) <= ub_on_sol:
+                        excl_fact = gcd(excl_fact, A[i][0])
+                excl_pts = []
+                for factor,deg in excl_fact.factor():
                     if deg == 1:
-                        random_pts.append(-factor.constant_coefficient())
+                        excl_pts.append(-factor.constant_coefficient())
                 all_points = set()
                 for idx, is_present in enumerate(x_indics):
-                    if message[idx][0] in random_pts and len(random_pts) < self._agreement:
-                        x_indics[idx] = 0
-                    elif is_present == 1 and not message[idx][0] in random_pts:
+                    if is_present == 1 and not message[idx][0] in excl_pts:
                         all_points.add(message[idx][0])
 
-                cnp = len(all_points) + len(random_pts)
+                err_term = 1
+                cnp = len(all_points) + len(excl_pts)
                 sv_bound = cnp - self._agreement + self._ell 
                 search_pt = all_points.pop()
                 # take ALL vectors below the sv_bound here to structure the 
@@ -339,18 +334,15 @@ class CHDecoder:
                 bvs = []
                 for i in range(A.nrows()):
                     row_norm = compute_norm(A[i])
-                    if row_norm <= sv_bound:
+                    if row_norm <= ub_on_sol:
                         bvs.append(self.unweightdual(A,i))
 
-                # function for computing the lattice problem
+                err_term *= (self._z - search_pt)
                 weight_factor = self._z**(cnp) 
-                # calculate the current point distribution
-                mtx_out = self.construct_one_out(bvs, weight_factor, search_pt)
-                #print("Constructed matrix of one out")
+                # second lattice reduction inside function
+                mtx_out = self.construct_one_out(bvs, weight_factor, err_term)
                 all_points.add(search_pt)
-                #sv_len = sv_bound
                 sv_len = find_sv_len(mtx_out)
-                itr = -1
                 total_vec = [0]*(self._c+1)
                 # reconstruct vectors in A from this sub-lattice -- in particular add up the shortest vectors -- all entries in this vector should be a multiple of (z-search_pt)
                 for itr in range(mtx_out.nrows()):
@@ -360,8 +352,6 @@ class CHDecoder:
                             mtx_itr = j - len(bvs)
                             recon_vec = add_vectors(recon_vec, scale_by(bvs[j], mtx_out[itr][mtx_itr]))
                         total_vec = add_vectors(total_vec,recon_vec)
-                        itr -= 1
-                #import pdb; pdb.set_trace()
                 total_vec[0] /= weight_factor
                 excl_poly = total_vec[1:]
                 excl_poly = [
@@ -370,7 +360,6 @@ class CHDecoder:
                 ]
                 # sometimes we get lucky and excl_poly is directly a solution 
                 if excl_poly[0].denominator() == 1 and excl_poly[0].numerator().degree() <= self._ell:
-                    #print("Found a polynomial through exclusion")
                     if not done_first_detection:
                         done_first_detection = True
                         time_to_detect = time.time() - detection_start
@@ -395,7 +384,6 @@ class CHDecoder:
                     xy_v = [(precon_li[j][0], precon_li[j][1][i]) for j in range(len(precon_li))]
                     poly_recon_att.append(self._pR.lagrange_polynomial(xy_v))
                 if compute_norm(poly_recon_att) <= self._ell:
-                    #print("Found a polynomial through reconstruction")
                     if not done_first_detection:
                         done_first_detection = True
                         time_to_detect = time.time() - detection_start
@@ -403,7 +391,6 @@ class CHDecoder:
                     self.remove_pts(message, poly_recon_att, x_indics)    
             if x_indics.count(1) < self._agreement:
                 clfs = False  
-        #import pdb; pdb.set_trace()      
         if not done_first_detection:
             done_first_detection = True
             time_to_detect = time.time() - detection_start
